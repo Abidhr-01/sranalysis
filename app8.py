@@ -15,8 +15,9 @@ if os.path.exists(FOLDER_PATH):
         st.warning("No CSV files found in the folder.")
     else:
         # Remove '.csv'
-        file_names = [os.path.splitext(f)[0] for f in csv_files]
+        file_names = sorted([os.path.splitext(f)[0] for f in csv_files])
         selected_name = st.selectbox("Select Stock Symbol:", file_names)
+
         selected_file = csv_files[file_names.index(selected_name)]
         file_path = os.path.join(FOLDER_PATH, selected_file)
 
