@@ -7,7 +7,7 @@ import os
 st.set_page_config(layout="wide", page_title="Stock Candlestick Viewer")
 
 # --- Folder path ---
-FOLDER_PATH = r"C:\Users\Abid\Documents\abid\stock\SymbolWise"
+FOLDER_PATH = "SymbolWise"
 
 if os.path.exists(FOLDER_PATH):
     csv_files = [f for f in os.listdir(FOLDER_PATH) if f.endswith('.csv')]
