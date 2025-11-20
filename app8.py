@@ -123,7 +123,7 @@ if os.path.exists(FOLDER_PATH):
                     x=[df.index[0], df.index[-1]],
                     y=[level, level],
                     mode="lines",
-                    line=dict(color=color, width=1.5),
+                    line=dict(color=color, width=1.5,dash="dot"),
                     name=label if not legend_done[label] else None,
                     showlegend=not legend_done[label]
                 ))
