@@ -4,146 +4,167 @@ import numpy as np
 import plotly.graph_objects as go
 import os
 
-st.set_page_config(layout="wide", page_title="Stock Candlestick Viewer")
+st.set_page_config(layout="wide", page_title="Support & Resistance Finder")
 
-# --- Folder path ---
 FOLDER_PATH = "SymbolWise"
+TOLERANCE = 1
+MIN_TOUCHES = 2
 
-if os.path.exists(FOLDER_PATH):
-    csv_files = [f for f in os.listdir(FOLDER_PATH) if f.endswith('.csv')]
-    if not csv_files:
-        st.warning("No CSV files found in the folder.")
-    else:
-        # Remove '.csv'
-        file_names = sorted([os.path.splitext(f)[0] for f in csv_files])
-        selected_name = st.selectbox("Select Stock Symbol:", file_names)
+def load_symbols():
+    if not os.path.exists(FOLDER_PATH):
+        return []
+    return [f for f in os.listdir(FOLDER_PATH) if f.endswith(".csv")]
 
-        selected_file = csv_files[file_names.index(selected_name)]
-        file_path = os.path.join(FOLDER_PATH, selected_file)
+def compute_avg(df):
+    df["avg"] = (df["open"] + df["high"] + df["low"] + df["close"]) / 4
+    return df
 
-        # --- SEARCH FILTER ---
-        st.markdown("### 🔍 Search Support / Resistance Lines")
-        filter_option = st.selectbox(
-            "Select Filter:",
-            ["All", "Support Only", "Resistance Only"]
-        )
-        apply_filter = st.button("Apply Filter")
+def find_levels(df):
+    avg = df["avg"].values
+    volumes = df["volume"].values
+    
+    levels = []
 
-        try:
-            df = pd.read_csv(file_path)
-            df['date'] = pd.to_datetime(df['date'])
-            df.rename(columns={
-                'open': 'Open',
-                'high': 'High',
-                'low': 'Low',
-                'close': 'Close',
-                'volume': 'Volume'
-            }, inplace=True)
+    for i in range(2, len(avg) - 2):
+        level = avg[i]
 
-            df = df.groupby('date').last().sort_index()
+        # All points touching the level
+        touch_indices = np.where(np.abs(avg - level) <= TOLERANCE)[0]
+        touches = len(touch_indices)
+        if touches < MIN_TOUCHES:
+            continue
 
-            # Parameters
-            WINDOW = 10
-            MIN_BOUNCES = 2
+        vol_at_touches = volumes[touch_indices]
+        avg_vol = np.mean(volumes)  # overall avg volume
+        mean_touch_vol = np.mean(vol_at_touches)
 
-            # Local min/max
-            df['min'] = df['Low'][(df['Low'] == df['Low'].rolling(WINDOW, center=True).min())]
-            df['max'] = df['High'][(df['High'] == df['High'].rolling(WINDOW, center=True).max())]
+        duration = touch_indices[-1] - touch_indices[0]
 
-            # Support detection
-            supports = []
-            for level in df['min'].dropna().unique():
-                bounces = 0
-                skip = False
-                for i in range(1, len(df)-1):
-                    if df['Low'].iloc[i] == level:
-                        if skip: continue
-                        bounces += 1
-                        skip = True
-                    else:
-                        skip = False
-                if bounces >= MIN_BOUNCES:
-                    supports.append(level)
+        # Average duration between touches
+        if len(touch_indices) > 1:
+            gaps = np.diff(touch_indices)
+            avg_gap = np.mean(gaps)
+        else:
+            avg_gap = 0
 
-            # Resistance detection
-            resistances = []
-            for level in df['max'].dropna().unique():
-                bounces = 0
-                skip = False
-                for i in range(1, len(df)-1):
-                    if df['High'].iloc[i] == level:
-                        if skip: continue
-                        bounces += 1
-                        skip = True
-                    else:
-                        skip = False
-                if bounces >= MIN_BOUNCES:
-                    resistances.append(level)
+        # NEW strength rules
+        if avg_gap < 30 and mean_touch_vol < avg_vol:
+            strength = "Minor"
+        elif avg_gap > 30 and mean_touch_vol > avg_vol:
+            strength = "Major"
+        else:
+            strength = "Semi-Major"
 
-            # Levels
-            all_levels = set(supports + resistances)
-            both_levels = set(supports).intersection(resistances)
 
-            # --- APPLY FILTER ---
-            if apply_filter:
-                if filter_option == "Support Only":
-                    all_levels = {x for x in all_levels if x in supports or x in both_levels}
-                elif filter_option == "Resistance Only":
-                    all_levels = {x for x in all_levels if x in resistances or x in both_levels}
-                # If "All" → do nothing
+        levels.append({
+            "price": round(level, 2),
+            "touches": touches,
+            "strength": strength,
+            "mean_volume": round(mean_touch_vol, 0),
+            "first_touch": int(touch_indices[0]),
+            "last_touch": int(touch_indices[-1]),
+            "duration": duration,
+            "avg_gap": round(avg_gap, 2),
+            "index": i
+        })
 
-            fig = go.Figure()
+    # Remove similar levels within tolerance
+    filtered = []
+    for lvl in levels:
+        if not filtered or all(abs(lvl["price"] - x["price"]) > TOLERANCE for x in filtered):
+            filtered.append(lvl)
 
-            # Candlestick
-            fig.add_trace(go.Candlestick(
-                x=df.index,
-                open=df['Open'],
-                high=df['High'],
-                low=df['Low'],
-                close=df['Close'],
-                name=selected_name,
-                showlegend=False
-            ))
+    return filtered
 
-            # Add S/R lines with single legend per type
-            legend_done = {"Support": False, "Resistance": False, "S/R": False}
 
-            for level in sorted(all_levels):
-                if level in both_levels:
-                    color = "blue"
-                    label = "S/R"
-                elif level in supports:
-                    color = "green"
-                    label = "Support"
-                else:
-                    color = "red"
-                    label = "Resistance"
+def classify_levels(df, levels):
+    close = df["close"].values
+    last_price = close[-1]
 
-                fig.add_trace(go.Scatter(
-                    x=[df.index[0], df.index[-1]],
-                    y=[level, level],
-                    mode="lines",
-                    line=dict(color=color, width=1.5,dash="dot"),
-                    name=label if not legend_done[label] else None,
-                    showlegend=not legend_done[label]
-                ))
+    supports, resistances = [], []
 
-                legend_done[label] = True
+    for lvl in levels:
+        price = lvl["price"]
 
-            fig.update_layout(
-                title=f"{selected_name} Candlestick with S/R Filter: {filter_option}",
-                xaxis_title="Date",
-                yaxis_title="Price",
-                xaxis_rangeslider_visible=False,
-                template="plotly_dark",
-                hovermode="x unified",
-                height=800,
-            )
+        if last_price > price:
+            lvl["type"] = "Support"
+            supports.append(lvl)
+        else:
+            lvl["type"] = "Resistance"
+            resistances.append(lvl)
 
-            st.plotly_chart(fig, use_container_width=True)
+    supports = sorted(supports, key=lambda x: abs(x["price"] - last_price))[:2]
+    resistances = sorted(resistances, key=lambda x: abs(x["price"] - last_price))[:2]
 
-        except Exception as e:
-            st.error(f"An error occurred: {e}")
+    return supports, resistances
 
-else:
-    st.error("Folder path does not exist.")
+st.title("📊 Automatic Support & Resistance Detector")
+
+files = load_symbols()
+if not files:
+    st.error("No CSV files found in SymbolWise/")
+    st.stop()
+
+selected = st.selectbox("Select Symbol", files)
+
+df = pd.read_csv(f"{FOLDER_PATH}/{selected}")
+df.columns = df.columns.str.lower()
+df = compute_avg(df)
+
+levels = find_levels(df)
+supports, resistances = classify_levels(df, levels)
+
+def filter_level_data(levels):
+    rows = []
+    for lvl in levels:
+        rows.append({
+            "Price": lvl["price"],
+            "Strength": lvl["strength"],
+            "Avg Volume at Touch": lvl["mean_volume"],
+            "Avg Duration Between Touches": lvl["avg_gap"]
+        })
+    return pd.DataFrame(rows)
+
+
+supports_df = filter_level_data(supports)
+resistances_df = filter_level_data(resistances)
+
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.subheader("🟢 Last 2 Supports")
+    st.dataframe(supports_df, use_container_width=True) 
+
+with col2:
+    st.subheader("🔴 Last 2 Resistances")
+    st.dataframe(resistances_df, use_container_width=True)
+
+fig = go.Figure()
+
+fig.add_trace(go.Candlestick(
+    x=df["date"],
+    open=df["open"],
+    high=df["high"],
+    low=df["low"],
+    close=df["close"],
+    name="Price"
+))
+
+for s in supports:
+    fig.add_hline(
+        y=s["price"],
+        line_width=2,
+        line_color="green"
+    )
+
+for r in resistances:
+    fig.add_hline(
+        y=r["price"],
+        line_width=2,
+        line_color="red"
+    )
+
+fig.update_layout(title=f"Support & Resistance: {selected}", height=600)
+
+st.plotly_chart(fig, use_container_width=True)
