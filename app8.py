@@ -120,8 +120,8 @@ def filter_level_data(levels):
         rows.append({
             "Price": lvl["price"],
             "Strength": lvl["strength"],
-            "Avg Volume at Touch": lvl["mean_volume"],
-            "Avg Duration Between Touches": lvl["avg_gap"]
+            "Avg Volume at Hit": lvl["mean_volume"],
+            "Avg Duration Between Hits": lvl["avg_gap"]
         })
     return pd.DataFrame(rows)
 
